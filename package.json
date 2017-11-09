@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "A function node for Node-RED with npm load capabilities",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ntsaini/node-red-contrib-function-npm"
+  },
   "dependencies": {
     "npm": "^2.14.7",
     "strip-comments": "^0.4.4",
