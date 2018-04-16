@@ -24,12 +24,20 @@
     <p>The npm package is only installed temporarily, it is automatically removed when the node-red application is closed.</p>
     <p>Example Usage</p>
     <pre>
+        //syntax to install a specific version
+        var lowerCase = require('lower-case@1.1.3')
+        
+        //if no version specified the latest version is installed
         var upperCase = require('upper-case');
-        msg.payload = upperCase('hello world');
+        
+        msg.payload = {             
+            upper: upperCase('Hello World'),
+            lower: lowerCase('Hello World')
+        } ;
         return msg;
     </pre>
     
-    <p>See the <a target="_blank" href="http://nodered.org/docs/writing-functions.html">github repository</a>
+    <p>See the <a target="_blank" href="https://github.com/ntsaini/node-red-contrib-function-npm">github repository</a>
     for more information and source code for npm function block</p>
     
     <p>See the <a target="_blank" href="http://nodered.org/docs/writing-functions.html">online documentation</a>

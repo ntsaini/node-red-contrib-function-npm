@@ -6,8 +6,8 @@ module.exports = function(RED) {
     var events = require('events');
     var strip = require('strip-comments');
     var temp = require("temp").track();
-    var temp_dir = temp.mkdirSync();
-    var temp_node_modules_path = temp_dir + "/node_modules/"
+    var tempDir = temp.mkdirSync();
+    var tempNodeModulesPath = tempDir + "/node_modules/"
 
     var eventEmitter = new events.EventEmitter();
 
@@ -187,9 +187,9 @@ module.exports = function(RED) {
             }
         }
         
-        var required_modules = []
-        var installed_modules = {}
-        var npm_modules = [];
+        var requiredModules = []
+        var installedModules = {}
+        var npmModules = [];
 
         /*
         Get the required modules by parsing code
@@ -203,42 +203,45 @@ module.exports = function(RED) {
         var pattern = /require\(([^)]+)\)/g
         var functionTextwoComments = strip(functionText);
         var result = pattern.exec(functionTextwoComments)
-        var required_modules = [];
+        var requiredModules = [];
         while(result != null){
             var module_name = result[1];
             //replace quotes if any
             module_name = module_name.replace(/'/g,"");
-            module_name = module_name.replace(/"/g,"");            
-            required_modules.push(module_name);
+            module_name = module_name.replace(/"/g,"");
+            var splitModuleName = module_name.split("@");            
+            var moduleNameOnly = splitModuleName[0];
+            var moduleVersion = splitModuleName.length > 1 ? splitModuleName[1] : '';
+            requiredModules.push({name: moduleNameOnly, version: moduleVersion, fullName: module_name});
             result = pattern.exec(functionTextwoComments);
         }
         
-        required_modules.forEach(function(npm_module) {
-            if (installed_modules[npm_module]) {                
-                npm_modules[npm_module] = require(temp_node_modules_path + npm_module);
+        requiredModules.forEach(function(npmModule) {
+            if (installedModules[npmModule.fullName]) {                
+                npmModules[npmModule.fullName] = require(tempNodeModulesPath + npmModule.name);
               } 
             else {
                 node.status({fill:"blue",shape:"dot",text:"installing"});
-                npm.load({prefix: temp_dir, progress: false, loglevel: 'silent'}, function (er) {
+                npm.load({prefix: tempDir, progress: false, loglevel: 'silent'}, function (er) {
                     if (er) return node.error(er);
             
-                    npm.commands.install([npm_module], function (er, data) {
+                    npm.commands.install([npmModule.fullName], function (er, data) {                        
                         if (er) {
                             node.status({fill:"red",shape:"dot",text:"failed"});
-                            installed_modules[npm_module] = false;
+                            installedModules[npmModule.fullName] = false;
                             return node.error(er)
                         }
             
                         try {                                                    
-                            npm_modules[npm_module] = require(temp_node_modules_path + npm_module);
+                            npmModules[npmModule.fullName] = require(tempNodeModulesPath + npmModule.name);                            
                             node.status({fill:"green",shape:"dot",text:"ready"});
                             setTimeout(node.status.bind(node, {}), 2000)
-                            node.log('Downloaded and installed NPM module: ' + npm_module)
-                            installed_modules[npm_module] = true
+                            node.log('Downloaded and installed NPM module: ' + npmModule.fullName)
+                            installedModules[npmModule.fullName] = true
                         } catch (err) {
                             node.error(err)
                             node.status({fill:"red",shape:"dot",text:"failed"});
-                            installed_modules[npm_module] = false;
+                            installedModules[npmModule.fullName] = false;
                         }
                   })
                 })
@@ -248,9 +251,9 @@ module.exports = function(RED) {
         var checkPackageLoad = function(){
             var downloadProgressResult = null;
             //check that the required modules are processed
-            if(required_modules.length != 0){
-                required_modules.forEach(function(module_name) {
-                    if (!(installed_modules.hasOwnProperty(module_name))){                        
+            if(requiredModules.length != 0){
+                requiredModules.forEach(function(npmModule) {
+                    if (!(installedModules.hasOwnProperty(npmModule.fullName))){                        
                         downloadProgressResult = false;
                     }
                     else{
@@ -264,17 +267,16 @@ module.exports = function(RED) {
             return downloadProgressResult;
         }
 
-        var requireOverload = function(module_name){
-            try {
-                return npm_modules[module_name]; 
+        var requireOverload = function(moduleName){
+            try {                
+                return npmModules[moduleName]; 
             } catch(err){
-                node.error("Cannot find module : " + module_name);
-            }
-            
+                node.error("Cannot find module : " + moduleName);
+            }            
         };
 
         //Add modules to the context
-        sandbox.__npm_modules__ = npm_modules;
+        sandbox.__npmModules__ = npmModules;
         sandbox.require = requireOverload;
 
         var context = vm.createContext(sandbox);

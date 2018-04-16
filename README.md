@@ -11,8 +11,16 @@ The function-npm node behaves like a normal function node, with the exception of
 It scans the script for any require statements and downloads the modules specified in the require statements. 
 The module is automatically cleaned from the disk when the node-red process closes.
 ```javascript
+//syntax to install a specific version
+var lowerCase = require('lower-case@1.1.3')
+
+//if no version specified the latest version is installed
 var upperCase = require('upper-case');
-msg.payload = upperCase('hello world');
+
+msg.payload = {             
+    upper: upperCase('Hello World'),
+    lower: lowerCase('Hello World')
+} ;
 return msg;
 ```
 
