@@ -187,9 +187,11 @@ module.exports = function(RED) {
             }
         }
         
-        var requiredModules = []
-        var installedModules = {}
+        var requiredModules = [];
+        var installedModules = {};
         var npmModules = [];
+        const RE_SCOPED = /^(@[^/]+\/[^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
+        const RE_NORMAL = /^([^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
 
         /*
         Get the required modules by parsing code
@@ -202,52 +204,80 @@ module.exports = function(RED) {
         */
         var pattern = /require\(([^)]+)\)/g
         var functionTextwoComments = strip(functionText);
-        var result = pattern.exec(functionTextwoComments)
-        var requiredModules = [];
+        var result = pattern.exec(functionTextwoComments);
+        
         while(result != null){
             var module_name = result[1];
             //replace quotes if any
             module_name = module_name.replace(/'/g,"");
             module_name = module_name.replace(/"/g,"");
-            var splitModuleName = module_name.split("@");            
-            var moduleNameOnly = splitModuleName[0];
-            var moduleVersion = splitModuleName.length > 1 ? splitModuleName[1] : '';
-            requiredModules.push({name: moduleNameOnly, version: moduleVersion, fullName: module_name});
+
+            var matched = module_name.charAt(0) === "@" ? module_name.match(RE_SCOPED) : module_name.match(RE_NORMAL);
+            var moduleNameOnly = matched[1];
+            var modulePath = matched[2] || '';
+            var moduleVersion = matched[3] || '';
+            requiredModules.push({name: moduleNameOnly, path: modulePath, version: moduleVersion, fullName: module_name});
             result = pattern.exec(functionTextwoComments);
         }
         
+        var setStatus = function(errors, itemsProcessed){
+            if(itemsProcessed === requiredModules.length){
+                if(errors.length === 0){
+                    node.status({fill:"green",shape:"dot",text:"ready"});
+                    setTimeout(node.status.bind(node, {}), 5000);
+                }
+                else{
+                    var msg = errors.length.toString() + " package(s) failed.";
+                    errors.forEach(function(e){
+                        msg = msg + "\r\n" + e.moduleName;
+                    });
+                    node.status({fill:"red",shape:"dot",text: msg});
+                }
+            }
+        };
+
+        var errors = [];
+        var itemsProcessed = 0;
         requiredModules.forEach(function(npmModule) {
+            var moduleFullPath = npmModule.path === '' ? tempNodeModulesPath + npmModule.name : tempNodeModulesPath + npmModule.path;
             if (installedModules[npmModule.fullName]) {                
-                npmModules[npmModule.fullName] = require(tempNodeModulesPath + npmModule.name);
+                npmModules[npmModule.fullName] = require(moduleFullPath);
+                itemsProcessed++;
               } 
             else {
                 node.status({fill:"blue",shape:"dot",text:"installing"});
                 npm.load({prefix: tempDir, progress: false, loglevel: 'silent'}, function (er) {
-                    if (er) return node.error(er);
+                    if (er){
+                        errors.push({moduleName: npmModule.fullName, error: er});
+                        itemsProcessed++;
+                        setStatus(errors,itemsProcessed);
+                        return node.error(er);
+                    } 
             
                     npm.commands.install([npmModule.fullName], function (er, data) {                        
+                        itemsProcessed++;
                         if (er) {
-                            node.status({fill:"red",shape:"dot",text:"failed"});
                             installedModules[npmModule.fullName] = false;
-                            return node.error(er)
+                            errors.push({moduleName: npmModule.fullName, error: er});
+                            setStatus(errors,itemsProcessed);
+                            return node.error(er);
                         }
             
                         try {                                                    
-                            npmModules[npmModule.fullName] = require(tempNodeModulesPath + npmModule.name);                            
-                            node.status({fill:"green",shape:"dot",text:"ready"});
-                            setTimeout(node.status.bind(node, {}), 2000)
-                            node.log('Downloaded and installed NPM module: ' + npmModule.fullName)
-                            installedModules[npmModule.fullName] = true
-                        } catch (err) {
-                            node.error(err)
-                            node.status({fill:"red",shape:"dot",text:"failed"});
+                            npmModules[npmModule.fullName] = require(moduleFullPath);                            
+                            node.log('Downloaded and installed NPM module: ' + npmModule.fullName);
+                            installedModules[npmModule.fullName] = true;
+                        } catch (err) {                            
                             installedModules[npmModule.fullName] = false;
+                            errors.push({moduleName: npmModule.fullName, error: err});
+                            node.error(err);
                         }
+                        setStatus(errors,itemsProcessed);                            
                   })
                 })
               }
         }, this);
-        
+
         var checkPackageLoad = function(){
             var downloadProgressResult = null;
             //check that the required modules are processed
@@ -265,7 +295,7 @@ module.exports = function(RED) {
                 downloadProgressResult = true;
             }
             return downloadProgressResult;
-        }
+        };
 
         var requireOverload = function(moduleName){
             try {                
