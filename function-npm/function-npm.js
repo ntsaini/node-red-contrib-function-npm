@@ -193,7 +193,6 @@ module.exports = function(RED) {
         const RE_SCOPED = /^(@[^/]+\/[^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
         const RE_NORMAL = /^([^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
 
-
         /*
         Get the required modules by parsing code
         
