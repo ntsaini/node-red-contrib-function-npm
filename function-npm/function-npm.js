@@ -220,39 +220,64 @@ module.exports = function(RED) {
             result = pattern.exec(functionTextwoComments);
         }
         
+        var setStatus = function(errors, itemsProcessed){
+            if(itemsProcessed === requiredModules.length){
+                if(errors.length === 0){
+                    node.status({fill:"green",shape:"dot",text:"ready"});
+                    setTimeout(node.status.bind(node, {}), 5000);
+                }
+                else{
+                    var msg = errors.length.toString() + " package(s) failed.";
+                    errors.forEach(function(e){
+                        msg = msg + "\r\n" + e.moduleName;
+                    });
+                    node.status({fill:"red",shape:"dot",text: msg});
+                }
+            }
+        };
+
+        var errors = [];
+        var itemsProcessed = 0;
         requiredModules.forEach(function(npmModule) {
             var moduleFullPath = npmModule.path === '' ? tempNodeModulesPath + npmModule.name : tempNodeModulesPath + npmModule.path;
             if (installedModules[npmModule.fullName]) {                
                 npmModules[npmModule.fullName] = require(moduleFullPath);
+                itemsProcessed++;
               } 
             else {
                 node.status({fill:"blue",shape:"dot",text:"installing"});
                 npm.load({prefix: tempDir, progress: false, loglevel: 'silent'}, function (er) {
-                    if (er) return node.error(er);
+                    if (er){
+                        errors.push({moduleName: npmModule.fullName, error: er});
+                        itemsProcessed++;
+                        setStatus(errors,itemsProcessed);
+                        return node.error(er);
+                    } 
             
                     npm.commands.install([npmModule.fullName], function (er, data) {                        
+                        itemsProcessed++;
                         if (er) {
-                            node.status({fill:"red",shape:"dot",text:"failed"});
                             installedModules[npmModule.fullName] = false;
-                            return node.error(er)
+                            errors.push({moduleName: npmModule.fullName, error: er});
+                            setStatus(errors,itemsProcessed);
+                            return node.error(er);
                         }
             
                         try {                                                    
                             npmModules[npmModule.fullName] = require(moduleFullPath);                            
-                            node.status({fill:"green",shape:"dot",text:"ready"});
-                            setTimeout(node.status.bind(node, {}), 2000)
-                            node.log('Downloaded and installed NPM module: ' + npmModule.fullName)
-                            installedModules[npmModule.fullName] = true
-                        } catch (err) {
-                            node.error(err)
-                            node.status({fill:"red",shape:"dot",text:"failed"});
+                            node.log('Downloaded and installed NPM module: ' + npmModule.fullName);
+                            installedModules[npmModule.fullName] = true;
+                        } catch (err) {                            
                             installedModules[npmModule.fullName] = false;
+                            errors.push({moduleName: npmModule.fullName, error: err});
+                            node.error(err);
                         }
+                        setStatus(errors,itemsProcessed);                            
                   })
                 })
               }
         }, this);
-        
+
         var checkPackageLoad = function(){
             var downloadProgressResult = null;
             //check that the required modules are processed
@@ -270,7 +295,7 @@ module.exports = function(RED) {
                 downloadProgressResult = true;
             }
             return downloadProgressResult;
-        }
+        };
 
         var requireOverload = function(moduleName){
             try {                
