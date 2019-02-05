@@ -187,9 +187,12 @@ module.exports = function(RED) {
             }
         }
         
-        var requiredModules = []
-        var installedModules = {}
+        var requiredModules = [];
+        var installedModules = {};
         var npmModules = [];
+        const RE_SCOPED = /^(@[^/]+\/[^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
+        const RE_NORMAL = /^([^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
+
 
         /*
         Get the required modules by parsing code
@@ -202,23 +205,26 @@ module.exports = function(RED) {
         */
         var pattern = /require\(([^)]+)\)/g
         var functionTextwoComments = strip(functionText);
-        var result = pattern.exec(functionTextwoComments)
-        var requiredModules = [];
+        var result = pattern.exec(functionTextwoComments);
+        
         while(result != null){
             var module_name = result[1];
             //replace quotes if any
             module_name = module_name.replace(/'/g,"");
             module_name = module_name.replace(/"/g,"");
-            var splitModuleName = module_name.split("@");            
-            var moduleNameOnly = splitModuleName[0];
-            var moduleVersion = splitModuleName.length > 1 ? splitModuleName[1] : '';
-            requiredModules.push({name: moduleNameOnly, version: moduleVersion, fullName: module_name});
+
+            var matched = module_name.charAt(0) === "@" ? module_name.match(RE_SCOPED) : module_name.match(RE_NORMAL);
+            var moduleNameOnly = matched[1];
+            var modulePath = matched[2] || '';
+            var moduleVersion = matched[3] || '';
+            requiredModules.push({name: moduleNameOnly, path: modulePath, version: moduleVersion, fullName: module_name});
             result = pattern.exec(functionTextwoComments);
         }
         
         requiredModules.forEach(function(npmModule) {
+            var moduleFullPath = npmModule.path === '' ? tempNodeModulesPath + npmModule.name : tempNodeModulesPath + npmModule.path;
             if (installedModules[npmModule.fullName]) {                
-                npmModules[npmModule.fullName] = require(tempNodeModulesPath + npmModule.name);
+                npmModules[npmModule.fullName] = require(moduleFullPath);
               } 
             else {
                 node.status({fill:"blue",shape:"dot",text:"installing"});
@@ -233,7 +239,7 @@ module.exports = function(RED) {
                         }
             
                         try {                                                    
-                            npmModules[npmModule.fullName] = require(tempNodeModulesPath + npmModule.name);                            
+                            npmModules[npmModule.fullName] = require(moduleFullPath);                            
                             node.status({fill:"green",shape:"dot",text:"ready"});
                             setTimeout(node.status.bind(node, {}), 2000)
                             node.log('Downloaded and installed NPM module: ' + npmModule.fullName)
