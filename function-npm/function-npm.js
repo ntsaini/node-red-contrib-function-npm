@@ -5,6 +5,7 @@ module.exports = function (RED) {
   var npm = require("npm");
   var events = require('events');
   var strip = require('strip-comments');
+  const { npmInstallTo } = require('npm-install-to')
   var temp = require("temp").track();
   var tempDir = temp.mkdirSync();
   var tempNodeModulesPath = tempDir + "/node_modules/"
@@ -246,6 +247,7 @@ module.exports = function (RED) {
       }
       else {
         node.status({ fill: "blue", shape: "dot", text: "installing" });
+
         npm.load({ prefix: tempDir, progress: false, loglevel: 'silent' }, function (er) {
           if (er) {
             errors.push({ moduleName: npmModule.fullName, error: er });
@@ -254,15 +256,7 @@ module.exports = function (RED) {
             return node.error(er);
           }
 
-          npm.commands.install([npmModule.fullName], function (er, data) {
-            itemsProcessed++;
-            if (er) {
-              installedModules[npmModule.fullName] = false;
-              errors.push({ moduleName: npmModule.fullName, error: er });
-              setStatus(errors, itemsProcessed);
-              return node.error(er);
-            }
-
+          npmInstallTo(tempDir, [npmModule.fullName]).then(() => {
             try {
               npmModules[npmModule.fullName] = require(moduleFullPath);
               node.log('Downloaded and installed NPM module: ' + npmModule.fullName);
@@ -272,7 +266,14 @@ module.exports = function (RED) {
               errors.push({ moduleName: npmModule.fullName, error: err });
               node.error(err);
             }
+          }).catch(er => {
+            installedModules[npmModule.fullName] = false;
+            errors.push({ moduleName: npmModule.fullName, error: er });
             setStatus(errors, itemsProcessed);
+            return node.error(er);
+          }).then(() => {
+            itemsProcessed++;
+            setStatus(errors,itemsProcessed);
           })
         })
       }
