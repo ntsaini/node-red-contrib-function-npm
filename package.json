@@ -1,6 +1,6 @@
 {
   "name": "node-red-contrib-function-npm",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A function node for Node-RED with npm load capabilities",
   "license": "Apache-2.0",
   "repository": {
