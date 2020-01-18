@@ -2,7 +2,7 @@ module.exports = function (RED) {
   "use strict";
   var util = require("util");
   var vm = require("vm");
-  var npm = require("npm");
+  var npm = require("global-npm");
   var events = require('events');
   var strip = require('strip-comments');
   const { npmInstallTo } = require('npm-install-to')

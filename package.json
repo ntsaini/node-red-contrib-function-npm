@@ -8,7 +8,7 @@
     "url": "https://github.com/ntsaini/node-red-contrib-function-npm"
   },
   "dependencies": {
-    "npm": "^6.13.6",
+    "global-npm": "^0.4.0",
     "npm-install-to": "^3.0.1",
     "strip-comments": "^2.0.1",
     "temp": "^0.9.1"
