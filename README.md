@@ -54,7 +54,7 @@ For providing the inspiration of the idea and code for installing npm packages d
 </pre>
 
 <pre>
-Project : node-red <a href="https://github.com/node-red/node-red/blob/master/nodes/core/core/80-function.js">(https://github.com/node-red/node-red/blob/master/nodes/core/core/80-function.js)</a>
+Project : node-red <a href="https://github.com/node-red/node-red/blob/master/packages/node_modules/%40node-red/nodes/core/function/10-function.js">(https://github.com/node-red/node-red/blob/master/packages/node_modules/%40node-red/nodes/core/function/10-function.js)</a>
 License : <a href="https://github.com/node-red/node-red/blob/master/LICENSE">Apache License 2.0</a>
 Author  : Node-RED team
 
