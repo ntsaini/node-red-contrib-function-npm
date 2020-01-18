@@ -12,7 +12,7 @@ module.exports = function (RED) {
 
   var eventEmitter = new events.EventEmitter();
 
-  function sendResults(node, _msgid, msgs) {
+  function sendResults(node, send, _msgid, msgs, cloneFirstMessage) {
     if (msgs == null) {
       return;
     } else if (!util.isArray(msgs)) {
@@ -28,6 +28,10 @@ module.exports = function (RED) {
           var msg = msgs[m][n];
           if (msg !== null && msg !== undefined) {
             if (typeof msg === 'object' && !Buffer.isBuffer(msg) && !util.isArray(msg)) {
+              if (msgCount === 0 && cloneFirstMessage !== false) {
+                msgs[m][n] = RED.util.cloneMessage(msgs[m][n]);
+                msg = msgs[m][n];
+              }
               msg._msgid = _msgid;
               msgCount++;
             } else {
@@ -35,35 +39,49 @@ module.exports = function (RED) {
               if (type === 'object') {
                 type = Buffer.isBuffer(msg) ? 'Buffer' : (util.isArray(msg) ? 'Array' : 'Date');
               }
-              node.error(RED._("function.error.non-message-returned", { type: type }))
+              node.error(RED._("function.error.non-message-returned", { type: type }));
             }
           }
         }
       }
     }
     if (msgCount > 0) {
-      node.send(msgs);
+      send(msgs);
     }
   }
 
-  function FunctionNPMNode(n) {
+  function FunctionNode(n) {
     RED.nodes.createNode(this, n);
     var node = this;
     this.name = n.name;
     this.func = n.func;
+
+    var handleNodeDoneCall = true;
+    // Check to see if the Function appears to call `node.done()`. If so,
+    // we will assume it is well written and does actually call node.done().
+    // Otherwise, we will call node.done() after the function returns regardless.
+    if (/node\.done\s*\(\s*\)/.test(this.func)) {
+      handleNodeDoneCall = false;
+    }
+
     var functionText = "var results = null;" +
-      "results = (function(msg){ " +
+      "results = (function(msg,__send__,__done__){ " +
       "var __msgid__ = msg._msgid;" +
       "var node = {" +
+      "id:__node__.id," +
+      "name:__node__.name," +
       "log:__node__.log," +
       "error:__node__.error," +
       "warn:__node__.warn," +
+      "debug:__node__.debug," +
+      "trace:__node__.trace," +
       "on:__node__.on," +
       "status:__node__.status," +
-      "send:function(msgs){ __node__.send(__msgid__,msgs);}" +
+      "send:function(msgs,cloneMsg){ __node__.send(__send__,__msgid__,msgs,cloneMsg);}," +
+      "done:__done__" +
       "};\n" +
       this.func + "\n" +
-      "})(msg);";
+      "})(msg,send,done);";
     this.topic = n.topic;
     this.outstandingTimers = [];
     this.outstandingIntervals = [];
@@ -71,10 +89,13 @@ module.exports = function (RED) {
       console: console,
       util: util,
       Buffer: Buffer,
+      Date: Date,
       RED: {
         util: RED.util
       },
       __node__: {
+        id: node.id,
+        name: node.name,
         log: function () {
           node.log.apply(node, arguments);
         },
@@ -84,8 +105,14 @@ module.exports = function (RED) {
         warn: function () {
           node.warn.apply(node, arguments);
         },
-        send: function (id, msgs) {
-          sendResults(node, id, msgs);
+        debug: function () {
+          node.debug.apply(node, arguments);
+        },
+        trace: function () {
+          node.trace.apply(node, arguments);
+        },
+        send: function (send, id, msgs, cloneMsg) {
+          sendResults(node, send, id, msgs, cloneMsg);
         },
         on: function () {
           if (arguments[0] === "input") {
@@ -136,6 +163,12 @@ module.exports = function (RED) {
           return node.context().global.keys.apply(node, arguments);
         }
       },
+      env: {
+        get: function (envVar) {
+          var flow = node._flow;
+          return flow.getSetting(envVar);
+        }
+      },
       setTimeout: function () {
         var func = arguments[0];
         var timerId;
@@ -183,7 +216,7 @@ module.exports = function (RED) {
     if (util.hasOwnProperty('promisify')) {
       sandbox.setTimeout[util.promisify.custom] = function (after, value) {
         return new Promise(function (resolve, reject) {
-          sandbox.setTimeout(function () { resolve(value) }, after);
+          sandbox.setTimeout(function () { resolve(value); }, after);
         });
       }
     }
@@ -273,7 +306,7 @@ module.exports = function (RED) {
             return node.error(er);
           }).then(() => {
             itemsProcessed++;
-            setStatus(errors,itemsProcessed);
+            setStatus(errors, itemsProcessed);
           })
         })
       }
@@ -312,48 +345,73 @@ module.exports = function (RED) {
 
     var context = vm.createContext(sandbox);
     try {
-      node.script = vm.createScript(functionText);
-
-      node.on("input", function (msg) {
-
+      this.script = vm.createScript(functionText, {
+        filename: 'Function node:' + this.id + (this.name ? ' [' + this.name + ']' : ''), // filename for stack traces
+        displayErrors: true
+        // Using the following options causes node 4/6 to not include the line number
+        // in the stack output. So don't use them.
+        // lineOffset: -11, // line number offset to be used for stack traces
+        // columnOffset: 0, // column number offset to be used for stack traces
+      });
+      this.on("input", function (msg, send, done) {
         //configure the event first
         eventEmitter.on('load-complete', function () {
           try {
             var start = process.hrtime();
             context.msg = msg;
-            node.script.runInContext(context);
-            sendResults(node, msg._msgid, context.results);
+            context.send = send;
+            context.done = done;
+
+            this.script.runInContext(context);
+            sendResults(this, send, msg._msgid, context.results, false);
+            if (handleNodeDoneCall) {
+              done();
+            }
 
             var duration = process.hrtime(start);
             var converted = Math.floor((duration[0] * 1e9 + duration[1]) / 10000) / 100;
-            node.metric("duration", msg, converted);
+            this.metric("duration", msg, converted);
             if (process.env.NODE_RED_FUNCTION_TIME) {
-              node.status({ fill: "yellow", shape: "dot", text: "" + converted });
+              this.status({ fill: "yellow", shape: "dot", text: "" + converted });
             }
           } catch (err) {
+            if ((typeof err === "object") && err.hasOwnProperty("stack")) {
+              //remove unwanted part
+              var index = err.stack.search(/\n\s*at ContextifyScript.Script.runInContext/);
+              err.stack = err.stack.slice(0, index).split('\n').slice(0, -1).join('\n');
+              var stack = err.stack.split(/\r?\n/);
 
-            var line = 0;
-            var errorMessage;
-            var stack = err.stack.split(/\r?\n/);
-            if (stack.length > 0) {
-              while (line < stack.length && stack[line].indexOf("ReferenceError") !== 0) {
-                line++;
-              }
+              //store the error in msg to be used in flows
+              msg.error = err;
 
-              if (line < stack.length) {
-                errorMessage = stack[line];
-                var m = /:(\d+):(\d+)$/.exec(stack[line + 1]);
-                if (m) {
-                  var lineno = Number(m[1]) - 1;
-                  var cha = m[2];
-                  errorMessage += " (line " + lineno + ", col " + cha + ")";
+              var line = 0;
+              var errorMessage;
+              if (stack.length > 0) {
+                while (line < stack.length && stack[line].indexOf("ReferenceError") !== 0) {
+                  line++;
+                }
+
+                if (line < stack.length) {
+                  errorMessage = stack[line];
+                  var m = /:(\d+):(\d+)$/.exec(stack[line + 1]);
+                  if (m) {
+                    var lineno = Number(m[1]) - 1;
+                    var cha = m[2];
+                    errorMessage += " (line " + lineno + ", col " + cha + ")";
+                  }
                 }
               }
+              if (!errorMessage) {
+                errorMessage = err.toString();
+              }
+              done(errorMessage);
             }
-            if (!errorMessage) {
-              errorMessage = err.toString();
+            else if (typeof err === "string") {
+              done(err);
             }
-            node.error(errorMessage, msg);
+            else {
+              done(JSON.stringify(err));
+            }
           }
           eventEmitter.removeAllListeners('load-complete');
         });
@@ -375,21 +433,22 @@ module.exports = function (RED) {
         }
       });
 
-      node.on("close", function () {
+      this.on("close", function () {
         while (node.outstandingTimers.length > 0) {
-          clearTimeout(node.outstandingTimers.pop())
+          clearTimeout(node.outstandingTimers.pop());
         }
         while (node.outstandingIntervals.length > 0) {
-          clearInterval(node.outstandingIntervals.pop())
+          clearInterval(node.outstandingIntervals.pop());
         }
-        node.status({});
-      })
+        this.status({});
+      });
     } catch (err) {
       // eg SyntaxError - which v8 doesn't include line number information
       // so we can't do better than this
-      node.error(err);
+      this.error(err);
     }
   }
+
   RED.nodes.registerType("function-npm", FunctionNPMNode);
   RED.library.register("functions");
 }
