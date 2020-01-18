@@ -50,7 +50,7 @@ module.exports = function (RED) {
     }
   }
 
-  function FunctionNode(n) {
+  function FunctionNPMNode(n) {
     RED.nodes.createNode(this, n);
     var node = this;
     this.name = n.name;
