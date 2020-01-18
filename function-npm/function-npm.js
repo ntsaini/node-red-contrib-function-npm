@@ -345,7 +345,7 @@ module.exports = function (RED) {
 
     var context = vm.createContext(sandbox);
     try {
-      this.script = vm.createScript(functionText, {
+      node.script = vm.createScript(functionText, {
         filename: 'Function node:' + this.id + (this.name ? ' [' + this.name + ']' : ''), // filename for stack traces
         displayErrors: true
         // Using the following options causes node 4/6 to not include the line number
@@ -353,7 +353,7 @@ module.exports = function (RED) {
         // lineOffset: -11, // line number offset to be used for stack traces
         // columnOffset: 0, // column number offset to be used for stack traces
       });
-      this.on("input", function (msg, send, done) {
+      node.on("input", function (msg, send, done) {
         //configure the event first
         eventEmitter.on('load-complete', function () {
           try {
@@ -362,17 +362,17 @@ module.exports = function (RED) {
             context.send = send;
             context.done = done;
 
-            this.script.runInContext(context);
-            sendResults(this, send, msg._msgid, context.results, false);
+            node.script.runInContext(context);
+            sendResults(node, send, msg._msgid, context.results, false);
             if (handleNodeDoneCall) {
               done();
             }
 
             var duration = process.hrtime(start);
             var converted = Math.floor((duration[0] * 1e9 + duration[1]) / 10000) / 100;
-            this.metric("duration", msg, converted);
+            node.metric("duration", msg, converted);
             if (process.env.NODE_RED_FUNCTION_TIME) {
-              this.status({ fill: "yellow", shape: "dot", text: "" + converted });
+              node.status({ fill: "yellow", shape: "dot", text: "" + converted });
             }
           } catch (err) {
             if ((typeof err === "object") && err.hasOwnProperty("stack")) {
@@ -433,19 +433,19 @@ module.exports = function (RED) {
         }
       });
 
-      this.on("close", function () {
+      node.on("close", function () {
         while (node.outstandingTimers.length > 0) {
           clearTimeout(node.outstandingTimers.pop());
         }
         while (node.outstandingIntervals.length > 0) {
           clearInterval(node.outstandingIntervals.pop());
         }
-        this.status({});
+        node.status({});
       });
     } catch (err) {
       // eg SyntaxError - which v8 doesn't include line number information
       // so we can't do better than this
-      this.error(err);
+      node.error(err);
     }
   }
 
