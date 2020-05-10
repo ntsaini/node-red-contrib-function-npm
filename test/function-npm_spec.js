@@ -2,23 +2,6 @@ var should = require("should");
 var helper = require("node-red-node-test-helper");
 var functionNpmNode = require("../function-npm/function-npm.js");
 
-const nodefunc = `
-    //syntax to install a specific version
-    var lowerCase = require('lower-case@1.1.3')
-    
-    //if no version specified the latest version is installed
-    //var upperCase = require('upper-case');
-    
-    //var signalr = require('@aspnet/signalr');
-    //var getcss = require('layoutanalysis/get-css');
-    
-    msg.payload = {             
-       lower: lowerCase('Hello World'),
-       //upper: upperCase.upperCase('Hello World')
-    } ;
-    
-    return msg;
-    `
 const nodeTestTimeoutInMs = 60000
 
 helper.init(require.resolve('node-red'));
@@ -36,67 +19,137 @@ describe('function-npm Node', function () {
         });
     });
 
-    // //function load test
-    // it('should be loaded', function (done) {
-    //     var flow = [
-    //         {
-    //             "id":"n1",
-    //             "type":"function-npm",
-    //             "name":"test-function-npm",
-    //             "func": nodefunc            
-    //         }];
-    //     helper.load(functionNpmNode, flow, function () {
-    //         var n1 = helper.getNode("n1");
-    //         var installing = false
-    //         n1.on('call:status', function(call){
-    //             //console.log(call.args);
-    //             if(!installing){
-    //                 call.should.be.calledWith({fill:"blue",shape:"dot",text:"installing"});
-    //                 installing = true
-    //             }else {
-    //                 call.should.be.calledWith({fill:"green",shape:"dot",text:"ready"});                                        
-    //                 done();                    
-    //             }
-    //         })      
-    //     });
-    // });
+    it('should be loaded', function (done) {
 
-    //function resolve test
-    it('should resolve functions', function (done) {
-        var flow = [
+        let nodefunc = `
+        //syntax to install a specific version
+        var lowerCase = require('lower-case')
+
+        msg.payload = {             
+           lower: lowerCase('Hello World'),
+        } ;
+        
+        return msg;
+        `
+        let flow = [
             {
                 "id":"n1",
                 "type":"function-npm",
                 "name":"test-function-npm",
-                "func": nodefunc,
+                "func": nodefunc            
+            }];
+
+        helper.load(functionNpmNode, flow, function () {
+            let n1 = helper.getNode("n1");
+            let installing = false;
+            let statusCheckHandler = function(call){
+                if(!installing){
+                    call.should.be.calledWith({fill:"blue",shape:"dot",text:"installing"});
+                    installing = true
+                }else {
+                    call.should.be.calledWith({fill:"green",shape:"dot",text:"ready"});                                        
+                    n1.removeListener('call:status',statusCheckHandler);
+                    done();
+                }
+            }
+            n1.on('call:status', statusCheckHandler);      
+        });
+    });
+
+    it('should load and resolve latest requires', function (done) {
+
+        let functionText = `
+        var { lowerCase } = require('lower-case');
+
+        msg.payload = {             
+           lower: lowerCase('Hello World'),
+        } ;
+        
+        return msg;
+        `
+        testLoadAndResolve(functionText,done, ['lower']);        
+    });
+
+    it('should load and resolve version specific requires', function (done) {
+
+        let functionText = `
+        var lowerCase = require('lower-case@1.1.3');
+
+        msg.payload = {             
+           lower: lowerCase('Hello World'),
+        } ;
+        
+        return msg;        
+        `
+        testLoadAndResolve(functionText, done, ['lower']);
+    });
+
+    it('should load and resolve requires with module name starting with @', function (done) {
+
+        let functionText = `
+        var signalr = require('@aspnet/signalr');
+
+        msg.payload = {             
+           signalr: signalr.LogLevel.Trace,
+        } ;
+        
+        return msg;        
+        `
+        testLoadAndResolve(functionText, done, ['signalr']);
+    });
+
+    it('should load multiple modules', function (done) {
+
+        let functionText = `
+        var lowerCase = require('lower-case@1.1.3');
+        var signalr = require('@aspnet/signalr');
+
+        msg.payload = {             
+           signalr: signalr.LogLevel.Trace,
+           lower: lowerCase('Hello World'),
+        } ;
+        
+        return msg;        
+        `
+        testLoadAndResolve(functionText, done, ['lower','signalr']);
+    });
+
+    var testLoadAndResolve = function(functionText, done, payloadProperties){
+        let flow = [
+            {
+                "id":"n1",
+                "type":"function-npm",
+                "name":"test-function-npm",
+                "func": functionText,
                 "wires":[["n2"]]
             },
             { 
                 id: "n2", 
                 type: "helper" 
             }];
+
         helper.load(functionNpmNode, flow, function () {
-            var n2 = helper.getNode("n2");
-            var n1 = helper.getNode("n1");      
+            let n2 = helper.getNode("n2");
+            let n1 = helper.getNode("n1");      
             n2.on("input", function (msg) {
                 try{
-                    console.log("triggered");
-                    console.log(msg);
-                    msg.should.have.propertyByPath('payload', 'lower');                    
+                    if(payloadProperties){
+                        payloadProperties.forEach(function(prop){
+                            msg.should.have.propertyByPath('payload', prop);
+                        })
+                    }                                        
                     done();    
                 } catch(err){
                     done(err);
                 }
             });
+            
+            let errorCheckHandler = function(call){
+                done(call.args);               
+            }
+            n1.on('call:error', errorCheckHandler);
+
             n1.receive();
-            n1.on('call:status', function(call){
-                console.log(call.args);
-                if(call.calledWithMatch({text:"ready"})){
-                    console.log('calling');                    
-                } else if(call.calledWithMatch({fill:"red"})){
-                    done("download failed");
-                }
-            });
-        });
-    });
+        });        
+    }
 });
