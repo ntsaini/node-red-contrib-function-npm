@@ -21,7 +21,7 @@ describe('function-npm Node', function () {
 
     it('should be loaded', function (done) {
 
-        let nodefunc = `
+        let functionText = `
         //syntax to install a specific version
         var lowerCase = require('lower-case')
 
@@ -36,7 +36,7 @@ describe('function-npm Node', function () {
                 "id":"n1",
                 "type":"function-npm",
                 "name":"test-function-npm",
-                "func": nodefunc            
+                "func": functionText            
             }];
 
         helper.load(functionNpmNode, flow, function () {
@@ -113,6 +113,80 @@ describe('function-npm Node', function () {
         `
         testLoadAndResolve(functionText, done, ['lower','signalr']);
     });
+
+    it('should catch module load errors and show in status message', function (done) {
+
+        let functionText = `
+        var xyz = require('zzhjs&*&@*');
+
+        msg.payload = {             
+           xyz: xyz.err,           
+        } ;
+        
+        return msg;        
+        `
+
+        let flow = [
+            {
+                "id":"n1",
+                "type":"function-npm",
+                "name":"test-function-npm",
+                "func": functionText            
+            }];
+
+        helper.load(functionNpmNode, flow, function () {
+            let n1 = helper.getNode("n1");
+            let installing = false;
+            let statusCheckHandler = function(call){                
+                if(!installing){
+                    installing = true
+                    call.should.be.calledWith({fill:"blue",shape:"dot",text:"installing"});                    
+                }else {
+                    call.should.be.calledWith({fill:"red",shape:"dot", text: 'Invalid package name "zzhjs&*&": name can only contain URL-friendly characters'});                                        
+                    n1.removeListener('call:status',statusCheckHandler);
+                    done();
+                }
+            }
+            
+            // let errorCheckHandler = function(){
+            //     done();               
+            // }
+            // n1.on('call:error', errorCheckHandler);
+
+            n1.on('call:status', statusCheckHandler);
+        });
+    });
+
+    it('should catch module load errors and show in node error log', function (done) {
+
+        let functionText = `
+        var xyz = require('zzhjs&*&@*');
+
+        msg.payload = {             
+           xyz: xyz.err,           
+        } ;
+        
+        return msg;        
+        `
+
+        let flow = [
+            {
+                "id":"n1",
+                "type":"function-npm",
+                "name":"test-function-npm",
+                "func": functionText            
+            }];
+
+        helper.load(functionNpmNode, flow, function () {
+            let n1 = helper.getNode("n1");
+            
+            let errorCheckHandler = function(){
+                done();               
+            }
+            n1.on('call:error', errorCheckHandler);
+        });
+    });
+
 
     var testLoadAndResolve = function(functionText, done, payloadProperties){
         let flow = [
