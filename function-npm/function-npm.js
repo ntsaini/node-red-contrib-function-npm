@@ -8,75 +8,7 @@ module.exports = function(RED) {
         
     var strip = require('strip-comments');
     var temp = require('temp');
-    var { npmInstallTo } = require('npm-install-to');
 
-    function getTrackedTempDir(){
-        temp.track();
-        var tempDir = temp.mkdirSync();
-        return tempDir + "/node_modules/"
-    }
-
-    var getRequiredModules = function(functionText){        
-        const RE_SCOPED = /^(@[^/]+\/[^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
-        const RE_NORMAL = /^([^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
-        /*
-        Get the required modules by parsing code
-        
-        require\( : match require followed by opening parentheses
-        ( : begin capturing group
-        [^)]+: match one or more non ) characters
-        ) : end capturing group
-        \) : match closing parentheses            
-        */
-        var pattern = /require\(([^)]+)\)/g
-        var functionTextwoComments = strip(functionText);
-        var result = pattern.exec(functionTextwoComments);
-        var requiredModules = []
-        
-        while(result != null){
-            //get module name and replace quotes if any            
-            var moduleFullName = result[1]
-            .replace(/'/g,"")
-            .replace(/"/g,"");
-            var matched = moduleFullName.charAt(0) === "@" ? moduleFullName.match(RE_SCOPED) : moduleFullName.match(RE_NORMAL);
-            var moduleNameOnly = matched[1];
-            var modulePath = matched[2] || '';
-            var moduleVersion = matched[3] || '';
-            requiredModules.push({
-                name: moduleNameOnly, 
-                path: modulePath, 
-                version: moduleVersion, 
-                fullName: moduleFullName
-            });
-            result = pattern.exec(functionTextwoComments);
-        }
-        return requiredModules;
-    }
-
-    var loadRequiredModules = function(requiredModules){
-        var promise = new Promise(function(resolve,reject){
-            try{
-                var moduleList = requiredModules.map(function(x){
-                    return x.fullName;
-                });
-                var tempDir = getTrackedTempDir();
-                var installedModules = {};
-                npmInstallTo(tempDir, moduleList)
-                .then(function(response){
-                    var packages = response.packages;
-                    requiredModules.forEach(function(npmModule) {                
-                        if (packages[npmModule.fullName]) {                
-                            installedModules[npmModule.fullName] = require(packages[npmModule.fullName]);                    
-                        }
-                    });
-                    resolve(installedModules);
-                });
-            }catch(err){
-                reject(err);
-            }            
-        });
-        return promise;
-    }
     /*end function-npm specific code*/    
     /********************************/
         
@@ -297,7 +229,84 @@ module.exports = function(RED) {
         var installedModules = {};
         var downloadComplete = false;
         var downloadError = false;
+        var tempDir = temp.mkdirSync();
+        
 
+        // function getTrackedTempDir(){
+        //     temp.track();
+        //     var tempDir = temp.mkdirSync();        
+        //     return tempDir;
+        // }
+    
+        var getRequiredModules = function(functionText){        
+            const RE_SCOPED = /^(@[^/]+\/[^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
+            const RE_NORMAL = /^([^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
+            /*
+            Get the required modules by parsing code
+            
+            require\( : match require followed by opening parentheses
+            ( : begin capturing group
+            [^)]+: match one or more non ) characters
+            ) : end capturing group
+            \) : match closing parentheses            
+            */
+            var pattern = /require\(([^)]+)\)/g
+            var functionTextwoComments = strip(functionText);
+            var result = pattern.exec(functionTextwoComments);
+            var requiredModules = []
+            
+            while(result != null){
+                //get module name and replace quotes if any            
+                var moduleFullName = result[1]
+                .replace(/'/g,"")
+                .replace(/"/g,"");
+                var matched = moduleFullName.charAt(0) === "@" ? moduleFullName.match(RE_SCOPED) : moduleFullName.match(RE_NORMAL);
+                var moduleNameOnly = matched[1];
+                var modulePath = matched[2] || '';
+                var moduleVersion = matched[3] || '';
+                requiredModules.push({
+                    name: moduleNameOnly, 
+                    path: modulePath, 
+                    version: moduleVersion, 
+                    fullName: moduleFullName
+                });
+                result = pattern.exec(functionTextwoComments);
+            }
+            return requiredModules;
+        }
+    
+        var loadRequiredModules = function(requiredModules){
+            var { npmInstallTo } = require('npm-install-to');
+            //let tempDir = getTrackedTempDir();
+            let promise = new Promise(function(resolve,reject){
+                try{
+                    var moduleList = requiredModules.map(function(x){
+                        return x.fullName;
+                    });
+                    var installedModules = {};
+                    node.log(node.name);
+                    node.log(tempDir);
+                    npmInstallTo(tempDir, moduleList)
+                    .then(function(response){
+                        node.log(node.name);
+                        node.log(packages);
+                        var packages = response.packages;
+                        requiredModules.forEach(function(npmModule) {                
+                            if (packages[npmModule.fullName]) {                
+                                installedModules[npmModule.fullName] = require(packages[npmModule.fullName]);                    
+                            }
+                        });
+                        resolve(installedModules);
+                    }).catch(function(err){
+                        reject(err);
+                    });
+                }catch(err){
+                    reject(err);
+                }            
+            });
+            return promise;
+        }
+        
         //define overload for the require methods
         var requireOverload = function(moduleName){
             try {
@@ -315,7 +324,7 @@ module.exports = function(RED) {
             node.status({fill:"blue",shape:"dot",text:"installing"});                
             
             //install the required modules
-            loadRequiredModules(requiredModules)
+            loadRequiredModules(requiredModules)//, tempDir)
             .then(function(modules){
                 //set the sandbox variables and the require overload
                 installedModules = modules;
@@ -332,13 +341,13 @@ module.exports = function(RED) {
                 //set error bit and send error to the log and set status            
                 downloadError = true;
                 node.error(err);
-                node.status({fill:"red",shape:"dot",text: err});    
+                node.status({fill:"red",shape:"dot",text: err.message});    
             })
         }catch(err){
             //set error bit and send error to the log and set status            
             downloadError = true;
             node.error(err);            
-            node.status({fill:"red",shape:"dot",text: err});            
+            node.status({fill:"red",shape:"dot",text: err.message});            
         }
 
         /*end function-npm specific code*/    

@@ -126,6 +126,9 @@ describe('function-npm Node', function () {
         return msg;        
         `
 
+        let errorText = 'Invalid package name "zzhjs&*&": name can only contain URL-friendly characters';
+
+
         let flow = [
             {
                 "id":"n1",
@@ -142,7 +145,7 @@ describe('function-npm Node', function () {
                     installing = true
                     call.should.be.calledWith({fill:"blue",shape:"dot",text:"installing"});                    
                 }else {
-                    call.should.be.calledWith({fill:"red",shape:"dot", text: 'Invalid package name "zzhjs&*&": name can only contain URL-friendly characters'});                                        
+                    call.should.be.calledWith({fill:"red",shape:"dot", text: errorText});                                        
                     n1.removeListener('call:status',statusCheckHandler);
                     done();
                 }
