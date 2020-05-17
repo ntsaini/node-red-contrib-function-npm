@@ -25,9 +25,7 @@ describe('function-npm Node', function () {
         //syntax to install a specific version
         var lowerCase = require('lower-case')
 
-        msg.payload = {             
-           lower: lowerCase('Hello World'),
-        } ;
+        msg.payload = {} ;
         
         return msg;
         `
@@ -151,11 +149,7 @@ describe('function-npm Node', function () {
                 }
             }
             
-            // let errorCheckHandler = function(){
-            //     done();               
-            // }
-            // n1.on('call:error', errorCheckHandler);
-
+            
             n1.on('call:status', statusCheckHandler);
         });
     });
@@ -190,8 +184,84 @@ describe('function-npm Node', function () {
         });
     });
 
+    it('should load multiple instances of node', function (done) {
 
-    var testLoadAndResolve = function(functionText, done, payloadProperties){
+        let functionText = `
+        var getcss = require('get-css');
+
+        msg.payload = {             
+           getcss: true,    
+        } ;
+        
+        return msg;    
+        `
+
+        let flow = [
+            {
+                "id":"n1",
+                "type":"function-npm",
+                "name":"test-function-npm1",
+                "func": functionText            
+            }, 
+            {
+                "id":"n2",
+                "type":"function-npm",
+                "name":"test-function-npm2",
+                "func": functionText
+            }
+        ];
+        
+        helper.load(functionNpmNode, flow, function () {
+            let n1 = helper.getNode("n1");            
+            let n1Installing = false;
+            let n1Done = false;
+            
+            let n2 = helper.getNode("n2");
+            let n2Installing = false;
+            let n2Done = false;
+            
+            let statusCheckHandler = function(call, id){
+                // console.log(call.args);
+                // console.log(id);                    
+                if((id == "n1" && !n1Installing) || (id == "n2" && !n2Installing)){
+                    call.should.be.calledWith({fill:"blue",shape:"dot",text:"installing"});
+                    n1Installing = (id == "n1") ? true : n1Installing;
+                    n2Installing = (id == "n2") ? true : n2Installing;
+                }else {
+                    call.should.be.calledWith({fill:"green",shape:"dot",text:"ready"});
+                    if(id == "n1"){
+                        n1.removeListener('call:status',statusCheckHandler);
+                        n1Done = true;                    
+                    }
+                    if(id == "n2"){
+                        n2.removeListener('call:status',statusCheckHandler);
+                        n2Done = true;                    
+                    }
+                    if(n1Done && n2Done){
+                        done();
+                    }
+                }
+            }
+
+            errorCheckHandler = function(call){
+                done(call.args);
+            }
+
+            n1.on('call:status', function(call){
+                statusCheckHandler(call, "n1");
+            });
+
+            n1.on('call:error', errorCheckHandler);
+
+            n2.on('call:status', function(call){
+                statusCheckHandler(call, "n2");
+            });
+
+            n2.on('call:error', errorCheckHandler);
+        });
+    });
+
+    let testLoadAndResolve = function(functionText, done, payloadProperties){
         let flow = [
             {
                 "id":"n1",
