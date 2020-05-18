@@ -5,10 +5,144 @@ module.exports = function(RED) {
     
     /*start function-npm specific code*/    
     /**********************************/
-        
     var strip = require('strip-comments');
-    var temp = require('temp');
+    var temp = require('temp').track();
+    var { npmInstallTo } = require('npm-install-to');
+        
+    /*start global variables*/
+    
+    //one common temp dir for all instances
+    var tempDirAllInstances = temp.mkdirSync();
 
+    //this variable will store reference for modules for all instances
+    const requiredModulesAllInstances = {};
+    
+    /*end global variables*/
+    
+    const registerAndLoadModule = function(module){
+        //if it isn't already in the list
+        if(!requiredModulesAllInstances[module.fullName]){            
+            requiredModulesAllInstances[module.fullName] = {
+                name: module.name,
+                fullName: module.fullName,
+                status: ModuleInstallStatus.Installing,
+                error: null,
+                requireReference: null
+            };
+            loadModule(module.fullName, tempDirAllInstances)
+            .then(function(modulePath){
+                let mod = requiredModulesAllInstances[module.fullName];
+                mod.requireReference = require(modulePath);
+                mod.status = ModuleInstallStatus.Installed;
+            }).catch(function(err){
+                let mod = requiredModulesAllInstances[module.fullName];
+                mod.error = err.message;
+                mod.status = ModuleInstallStatus.Error;
+            });        
+        }
+    }
+    
+    const ModuleInstallStatus = {        
+        Installing: 1,
+        Installed: 2,
+        Error: 3,
+    }
+
+    const getRequiredModules = function(functionText){        
+        const RE_SCOPED = /^(@[^/]+\/[^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
+        const RE_NORMAL = /^([^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
+        /*
+        Get the required modules by parsing code
+        
+        require\( : match require followed by opening parentheses
+        ( : begin capturing group
+        [^)]+: match one or more non ) characters
+        ) : end capturing group
+        \) : match closing parentheses            
+        */
+        let pattern = /require\(([^)]+)\)/g
+        let functionTextwoComments = strip(functionText);
+        let result = pattern.exec(functionTextwoComments);
+        let requiredModules = []
+        
+        while(result != null){
+            //get module name and replace quotes if any            
+            let moduleFullName = result[1]
+            .replace(/'/g,"")
+            .replace(/"/g,"");
+            let matched = moduleFullName.charAt(0) === "@" ? moduleFullName.match(RE_SCOPED) : moduleFullName.match(RE_NORMAL);
+            let moduleNameOnly = matched[1];
+            let modulePath = matched[2] || '';
+            let moduleVersion = matched[3] || '';
+            requiredModules.push({
+                name: moduleNameOnly, 
+                path: modulePath, 
+                version: moduleVersion, 
+                fullName: moduleFullName
+            });
+            result = pattern.exec(functionTextwoComments);
+        }
+        return requiredModules;
+    }
+
+    const loadModule = function(moduleFullName, dir){
+        let promise = new Promise(function(resolve,reject){
+            try{
+                npmInstallTo(dir, [moduleFullName])
+                .then(function(response){
+                    var packages = response.packages;
+                    resolve(packages[moduleFullName]);
+                }).catch(function(err){
+                    reject(err);
+                });
+            }catch(err){
+                reject(err);
+            }            
+        });
+        return promise;
+    }
+
+    const checkInstallStatus = function(instanceRequiredModules){
+        let result = {
+            attemptComplete: true,
+            installSuccessful: true,
+            statusMessage: "",
+            errorMessage: ""
+        }
+        instanceRequiredModules.forEach(function(module){
+            if(requiredModulesAllInstances[module.fullName]){
+                let mod = requiredModulesAllInstances[module.fullName];
+                if(mod.status === ModuleInstallStatus.Installing){
+                    result.attemptComplete = false;
+                    result.installSuccessful = false;
+                    result.statusMessage += "Installing : " + mod.fullName + "\r\n";                    
+                }else if(mod.status === ModuleInstallStatus.Installed){
+                    result.statusMessage += "Installed : " + mod.fullName + "\r\n"
+                }else if(mod.status === ModuleInstallStatus.Error){
+                    result.installSuccessful = false;
+                    result.statusMessage += "Error : " + mod.fullName + " : " + mod.error + "\r\n"
+                    result.errorMessage += "Error : " + mod.fullName + " : " + mod.error + "\r\n"
+                }
+            }else{
+                result.installSuccessful = false;
+                result.attemptComplete = false;
+                result.statusMessage += "Not Registered : " + module.fullName + "\n";
+                result.errorMessage += "Not Registered : " + module.fullName + "\n";  
+            }
+        });
+        return result;
+    }
+
+    const requireOverload = function(moduleFullName, installedModules){                  
+        if(installedModules[moduleFullName] && 
+                installedModules[moduleFullName].requireReference &&
+                installedModules[moduleFullName].requireReference !== null){                
+                return (installedModules[moduleFullName].requireReference);                    
+            }else{
+                throw "Cannot find module : " + moduleFullName;
+            }
+    };
+    
     /*end function-npm specific code*/    
     /********************************/
         
@@ -224,132 +358,50 @@ module.exports = function(RED) {
 
         /*start function-npm specific code*/    
         /**********************************/
+        let downloadComplete = false;
+        let downloadError = false;
+        let instanceRequiredModules;
         
-        //variable to hold all the installed modules
-        var installedModules = {};
-        var downloadComplete = false;
-        var downloadError = false;
-        var tempDir = temp.mkdirSync();
-        
-
-        // function getTrackedTempDir(){
-        //     temp.track();
-        //     var tempDir = temp.mkdirSync();        
-        //     return tempDir;
-        // }
-    
-        var getRequiredModules = function(functionText){        
-            const RE_SCOPED = /^(@[^/]+\/[^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
-            const RE_NORMAL = /^([^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
-            /*
-            Get the required modules by parsing code
-            
-            require\( : match require followed by opening parentheses
-            ( : begin capturing group
-            [^)]+: match one or more non ) characters
-            ) : end capturing group
-            \) : match closing parentheses            
-            */
-            var pattern = /require\(([^)]+)\)/g
-            var functionTextwoComments = strip(functionText);
-            var result = pattern.exec(functionTextwoComments);
-            var requiredModules = []
-            
-            while(result != null){
-                //get module name and replace quotes if any            
-                var moduleFullName = result[1]
-                .replace(/'/g,"")
-                .replace(/"/g,"");
-                var matched = moduleFullName.charAt(0) === "@" ? moduleFullName.match(RE_SCOPED) : moduleFullName.match(RE_NORMAL);
-                var moduleNameOnly = matched[1];
-                var modulePath = matched[2] || '';
-                var moduleVersion = matched[3] || '';
-                requiredModules.push({
-                    name: moduleNameOnly, 
-                    path: modulePath, 
-                    version: moduleVersion, 
-                    fullName: moduleFullName
-                });
-                result = pattern.exec(functionTextwoComments);
-            }
-            return requiredModules;
-        }
-    
-        var loadRequiredModules = function(requiredModules){
-            var { npmInstallTo } = require('npm-install-to');
-            //let tempDir = getTrackedTempDir();
-            let promise = new Promise(function(resolve,reject){
-                try{
-                    var moduleList = requiredModules.map(function(x){
-                        return x.fullName;
-                    });
-                    var installedModules = {};
-                    node.log(node.name);
-                    node.log(tempDir);
-                    npmInstallTo(tempDir, moduleList)
-                    .then(function(response){
-                        node.log(node.name);
-                        node.log(packages);
-                        var packages = response.packages;
-                        requiredModules.forEach(function(npmModule) {                
-                            if (packages[npmModule.fullName]) {                
-                                installedModules[npmModule.fullName] = require(packages[npmModule.fullName]);                    
-                            }
-                        });
-                        resolve(installedModules);
-                    }).catch(function(err){
-                        reject(err);
-                    });
-                }catch(err){
-                    reject(err);
-                }            
-            });
-            return promise;
-        }
-        
-        //define overload for the require methods
-        var requireOverload = function(moduleName){
-            try {
-                return installedModules[moduleName]; 
-            } catch(err){
-                node.error("Cannot find module : " + moduleName);
-            }            
-        };
-
         try{
             //get the required modules by parsing the function text
-            var requiredModules = getRequiredModules(functionText);
+            instanceRequiredModules = getRequiredModules(functionText);
             
             //set the node status to installing
             node.status({fill:"blue",shape:"dot",text:"installing"});                
             
-            //install the required modules
-            loadRequiredModules(requiredModules)//, tempDir)
-            .then(function(modules){
-                //set the sandbox variables and the require overload
-                installedModules = modules;
-                sandbox.__installedModules__ = installedModules;
-                sandbox.require = requireOverload;
+            instanceRequiredModules.forEach(function(module){
+                registerAndLoadModule(module);                
+            });
 
-                //set status to ready for 5 seconds
-                node.status({fill:"green",shape:"dot",text:"ready"});
-                setTimeout(node.status.bind(node, {}), 5000);
+            //function to check install status and update node status
+            const checkInstallStatusAndUpdateStatusMessage = function(){                
+                let result = checkInstallStatus(instanceRequiredModules);
+                if(result.attemptComplete){
+                    if(result.installSuccessful){
+                        node.status({fill:"green",shape:"dot",text:"ready"});
+                        downloadComplete = true;
+                    }else{
+                        node.error(result.errorMessage);
+                        node.status({fill:"red",shape:"dot",text: result.errorMessage});
+                        downloadError = true;
+                    }
+                }else{
+                    //node.status({fill:"blue",shape:"dot",text:result.statusMessage});
+                    setTimeout(checkInstallStatusAndUpdateStatusMessage, 1000);
+                }
+            }
 
-                //set download complete true
-                downloadComplete = true;                
-            }).catch(function(err){
-                //set error bit and send error to the log and set status            
-                downloadError = true;
-                node.error(err);
-                node.status({fill:"red",shape:"dot",text: err.message});    
-            })
+            checkInstallStatusAndUpdateStatusMessage();
+            
+            sandbox.require = function(moduleFullName){
+                return requireOverload(moduleFullName, requiredModulesAllInstances);
+            }
         }catch(err){
             //set error bit and send error to the log and set status            
             downloadError = true;
             node.error(err);            
             node.status({fill:"red",shape:"dot",text: err.message});            
         }
-
         /*end function-npm specific code*/    
         /********************************/
             
@@ -368,18 +420,19 @@ module.exports = function(RED) {
             
             /*start function-npm specific code*/    
             /**********************************/        
-            node.on("input", function(msg, send, done){                
-                var interval = setInterval(function(){
-                    if(downloadError){
-                        node.log("error in downloading");
-                        clearInterval(interval);
-                    }else if(downloadComplete){
-                        node.log('complete');
-                        clearInterval(interval);
+            node.on("input", function(msg, send, done){         
+                const checkStatusAndInvokeEventHandler = function(){
+                    if(downloadComplete){
                         inputEventHandler(msg,send,done);                        
+                    }else if(downloadError){
+                        node.error("Error downloading module, not executing function");
+                    }else{
+                        setTimeout(checkStatusAndInvokeEventHandler, 1000);
                     }
-                },1000);                
-            })
+                }
+
+                checkStatusAndInvokeEventHandler();
+            });
             
             /*end function-npm specific code*/    
             /********************************/

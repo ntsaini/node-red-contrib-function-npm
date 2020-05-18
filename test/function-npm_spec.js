@@ -124,7 +124,7 @@ describe('function-npm Node', function () {
         return msg;        
         `
 
-        let errorText = 'Invalid package name "zzhjs&*&": name can only contain URL-friendly characters';
+        let errorText = 'Error : zzhjs&*&@* : Invalid package name "zzhjs&*&": name can only contain URL-friendly characters\r\n'
 
 
         let flow = [
@@ -138,18 +138,17 @@ describe('function-npm Node', function () {
         helper.load(functionNpmNode, flow, function () {
             let n1 = helper.getNode("n1");
             let installing = false;
-            let statusCheckHandler = function(call){                
+            let statusCheckHandler = function(call){  
                 if(!installing){
                     installing = true
                     call.should.be.calledWith({fill:"blue",shape:"dot",text:"installing"});                    
                 }else {
-                    call.should.be.calledWith({fill:"red",shape:"dot", text: errorText});                                        
+                    call.should.be.calledWithMatch({fill:"red",shape:"dot", text: errorText});                                        
                     n1.removeListener('call:status',statusCheckHandler);
                     done();
                 }
             }
-            
-            
+
             n1.on('call:status', statusCheckHandler);
         });
     });
@@ -221,8 +220,6 @@ describe('function-npm Node', function () {
             let n2Done = false;
             
             let statusCheckHandler = function(call, id){
-                // console.log(call.args);
-                // console.log(id);                    
                 if((id == "n1" && !n1Installing) || (id == "n2" && !n2Installing)){
                     call.should.be.calledWith({fill:"blue",shape:"dot",text:"installing"});
                     n1Installing = (id == "n1") ? true : n1Installing;
