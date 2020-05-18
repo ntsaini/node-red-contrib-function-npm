@@ -6,7 +6,7 @@ const nodeTestTimeoutInMs = 60000
 
 helper.init(require.resolve('node-red'));
  
-describe('function-npm Node', function () {
+describe('function-npm node tests', function () {
     this.timeout(nodeTestTimeoutInMs);
   
     beforeEach(function (done) {

@@ -15,14 +15,14 @@ module.exports = function(RED) {
     var tempDirAllInstances = temp.mkdirSync();
 
     //this variable will store reference for modules for all instances
-    const requiredModulesAllInstances = {};
+    const allInstancesRequiredModules = {};
     
     /*end global variables*/
     
-    const registerAndLoadModule = function(module){
+    const registerAndLoadModule = function(module, allModulesList){
         //if it isn't already in the list
-        if(!requiredModulesAllInstances[module.fullName]){            
-            requiredModulesAllInstances[module.fullName] = {
+        if(!allModulesList[module.fullName]){            
+            allModulesList[module.fullName] = {
                 name: module.name,
                 fullName: module.fullName,
                 status: ModuleInstallStatus.Installing,
@@ -31,11 +31,11 @@ module.exports = function(RED) {
             };
             loadModule(module.fullName, tempDirAllInstances)
             .then(function(modulePath){
-                let mod = requiredModulesAllInstances[module.fullName];
+                let mod = allModulesList[module.fullName];
                 mod.requireReference = require(modulePath);
                 mod.status = ModuleInstallStatus.Installed;
             }).catch(function(err){
-                let mod = requiredModulesAllInstances[module.fullName];
+                let mod = allModulesList[module.fullName];
                 mod.error = err.message;
                 mod.status = ModuleInstallStatus.Error;
             });        
@@ -102,7 +102,7 @@ module.exports = function(RED) {
         return promise;
     }
 
-    const checkInstallStatus = function(instanceRequiredModules){
+    const checkInstallStatus = function(instanceRequiredModules, allModulesList){
         let result = {
             attemptComplete: true,
             installSuccessful: true,
@@ -110,8 +110,8 @@ module.exports = function(RED) {
             errorMessage: ""
         }
         instanceRequiredModules.forEach(function(module){
-            if(requiredModulesAllInstances[module.fullName]){
-                let mod = requiredModulesAllInstances[module.fullName];
+            if(allModulesList[module.fullName]){
+                let mod = allModulesList[module.fullName];
                 if(mod.status === ModuleInstallStatus.Installing){
                     result.attemptComplete = false;
                     result.installSuccessful = false;
@@ -133,11 +133,11 @@ module.exports = function(RED) {
         return result;
     }
 
-    const requireOverload = function(moduleFullName, installedModules){                  
-        if(installedModules[moduleFullName] && 
-                installedModules[moduleFullName].requireReference &&
-                installedModules[moduleFullName].requireReference !== null){                
-                return (installedModules[moduleFullName].requireReference);                    
+    const requireOverload = function(moduleFullName, allModulesList){                  
+        if(allModulesList[moduleFullName] && 
+                allModulesList[moduleFullName].requireReference &&
+                allModulesList[moduleFullName].requireReference !== null){                
+                return (allModulesList[moduleFullName].requireReference);                    
             }else{
                 throw "Cannot find module : " + moduleFullName;
             }
@@ -370,12 +370,12 @@ module.exports = function(RED) {
             node.status({fill:"blue",shape:"dot",text:"installing"});                
             
             instanceRequiredModules.forEach(function(module){
-                registerAndLoadModule(module);                
+                registerAndLoadModule(module, allInstancesRequiredModules);                
             });
 
             //function to check install status and update node status
             const checkInstallStatusAndUpdateStatusMessage = function(){                
-                let result = checkInstallStatus(instanceRequiredModules);
+                let result = checkInstallStatus(instanceRequiredModules, allInstancesRequiredModules);
                 if(result.attemptComplete){
                     if(result.installSuccessful){
                         node.status({fill:"green",shape:"dot",text:"ready"});
@@ -394,7 +394,7 @@ module.exports = function(RED) {
             checkInstallStatusAndUpdateStatusMessage();
             
             sandbox.require = function(moduleFullName){
-                return requireOverload(moduleFullName, requiredModulesAllInstances);
+                return requireOverload(moduleFullName, allInstancesRequiredModules);
             }
         }catch(err){
             //set error bit and send error to the log and set status            
