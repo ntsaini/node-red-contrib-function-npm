@@ -1,17 +1,148 @@
 module.exports = function(RED) {
     "use strict";
-    var util = require("util");    
+    var util = require("util");
     var vm = require("vm");
-    var npm = require("npm");
-    var events = require('events');
+    
+    /*start function-npm specific code*/    
+    /**********************************/
     var strip = require('strip-comments');
-    var temp = require("temp").track();
-    var tempDir = temp.mkdirSync();
-    var tempNodeModulesPath = tempDir + "/node_modules/"
-
-    var eventEmitter = new events.EventEmitter();
-
-    function sendResults(node,_msgid,msgs) {
+    var temp = require('temp').track();
+    var { npmInstallTo } = require('npm-install-to');
+        
+    /*start global variables*/
+    
+    //one common temp dir for all instances
+    var tempDirAllInstances = temp.mkdirSync();
+    //this variable will store reference for modules for all instances
+    const allInstancesRequiredModules = {};
+    
+    /*end global variables*/
+    
+    const registerAndLoadModule = function(module, allModulesList){
+        //if it isn't already in the list
+        if(!allModulesList[module.fullName]){            
+            allModulesList[module.fullName] = {
+                name: module.name,
+                fullName: module.fullName,
+                status: ModuleInstallStatus.Installing,
+                error: null,
+                requireReference: null
+            };
+            loadModule(module.fullName, tempDirAllInstances)
+            .then(function(modulePath){
+                let mod = allModulesList[module.fullName];
+                mod.requireReference = require(modulePath);
+                mod.status = ModuleInstallStatus.Installed;
+            }).catch(function(err){
+                let mod = allModulesList[module.fullName];
+                mod.error = err.message;
+                mod.status = ModuleInstallStatus.Error;
+            });        
+        }
+    }
+    
+    const ModuleInstallStatus = {        
+        Installing: 1,
+        Installed: 2,
+        Error: 3,
+    }
+    const getRequiredModules = function(functionText){        
+        const RE_SCOPED = /^(@[^/]+\/[^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
+        const RE_NORMAL = /^([^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
+        /*
+        Get the required modules by parsing code
+        
+        require\( : match require followed by opening parentheses
+        ( : begin capturing group
+        [^)]+: match one or more non ) characters
+        ) : end capturing group
+        \) : match closing parentheses            
+        */
+        let pattern = /require\(([^)]+)\)/g
+        let functionTextwoComments = strip(functionText);
+        let result = pattern.exec(functionTextwoComments);
+        let requiredModules = []
+        
+        while(result != null){
+            //get module name and replace quotes if any            
+            let moduleFullName = result[1]
+            .replace(/'/g,"")
+            .replace(/"/g,"");
+            let matched = moduleFullName.charAt(0) === "@" ? moduleFullName.match(RE_SCOPED) : moduleFullName.match(RE_NORMAL);
+            let moduleNameOnly = matched[1];
+            let modulePath = matched[2] || '';
+            let moduleVersion = matched[3] || '';
+            requiredModules.push({
+                name: moduleNameOnly, 
+                path: modulePath, 
+                version: moduleVersion, 
+                fullName: moduleFullName
+            });
+            result = pattern.exec(functionTextwoComments);
+        }
+        return requiredModules;
+    }
+    const loadModule = function(moduleFullName, dir){
+        let promise = new Promise(function(resolve,reject){
+            try{
+                npmInstallTo(dir, [moduleFullName])
+                .then(function(response){
+                    var packages = response.packages;
+                    resolve(packages[moduleFullName]);
+                }).catch(function(err){
+                    reject(err);
+                });
+            }catch(err){
+                reject(err);
+            }            
+        });
+        return promise;
+    }
+    const checkInstallStatus = function(instanceRequiredModules, allModulesList){
+        let result = {
+            attemptComplete: true,
+            installSuccessful: true,
+            statusMessage: "",
+            errorMessage: ""
+        }
+        instanceRequiredModules.forEach(function(module){
+            if(allModulesList[module.fullName]){
+                let mod = allModulesList[module.fullName];
+                if(mod.status === ModuleInstallStatus.Installing){
+                    result.attemptComplete = false;
+                    result.installSuccessful = false;
+                    result.statusMessage += "Installing : " + mod.fullName + "\r\n";                    
+                }else if(mod.status === ModuleInstallStatus.Installed){
+                    result.statusMessage += "Installed : " + mod.fullName + "\r\n"
+                }else if(mod.status === ModuleInstallStatus.Error){
+                    result.installSuccessful = false;
+                    result.statusMessage += "Error : " + mod.fullName + " : " + mod.error + "\r\n"
+                    result.errorMessage += "Error : " + mod.fullName + " : " + mod.error + "\r\n"
+                }
+            }else{
+                result.installSuccessful = false;
+                result.attemptComplete = false;
+                result.statusMessage += "Not Registered : " + module.fullName + "\n";
+                result.errorMessage += "Not Registered : " + module.fullName + "\n";  
+            }
+        });
+        return result;
+    }
+    const requireOverload = function(moduleFullName, allModulesList){                  
+        if(allModulesList[moduleFullName] && 
+                allModulesList[moduleFullName].requireReference &&
+                allModulesList[moduleFullName].requireReference !== null){                
+                return (allModulesList[moduleFullName].requireReference);                    
+            }else{
+                throw "Cannot find module : " + moduleFullName;
+            }
+    };
+    
+    /*end function-npm specific code*/    
+    /********************************/
+        
+    
+    function sendResults(node,send,_msgid,msgs,cloneFirstMessage) {
         if (msgs == null) {
             return;
         } else if (!util.isArray(msgs)) {
@@ -27,6 +158,10 @@ module.exports = function(RED) {
                     var msg = msgs[m][n];
                     if (msg !== null && msg !== undefined) {
                         if (typeof msg === 'object' && !Buffer.isBuffer(msg) && !util.isArray(msg)) {
+                            if (msgCount === 0 && cloneFirstMessage !== false) {
+                                msgs[m][n] = RED.util.cloneMessage(msgs[m][n]);
+                                msg = msgs[m][n];
+                            }
                             msg._msgid = _msgid;
                             msgCount++;
                         } else {
@@ -34,46 +169,60 @@ module.exports = function(RED) {
                             if (type === 'object') {
                                 type = Buffer.isBuffer(msg)?'Buffer':(util.isArray(msg)?'Array':'Date');
                             }
-                            node.error(RED._("function.error.non-message-returned",{ type: type }))
+                            node.error(RED._("function.error.non-message-returned",{ type: type }));
                         }
                     }
                 }
             }
         }
         if (msgCount>0) {
-            node.send(msgs);
+            send(msgs);
         }
     }
-
-    function FunctionNPMNode(n) {
-        RED.nodes.createNode(this,n);        
+    function FunctionNpmNode(n) {  //Name Change
+        RED.nodes.createNode(this,n);
         var node = this;
-        this.name = n.name;
-        this.func = n.func;
+        node.name = n.name;
+        node.func = n.func;
+        var handleNodeDoneCall = true;
+        // Check to see if the Function appears to call `node.done()`. If so,
+        // we will assume it is well written and does actually call node.done().
+        // Otherwise, we will call node.done() after the function returns regardless.
+        if (/node\.done\s*\(\s*\)/.test(node.func)) {
+            handleNodeDoneCall = false;
+        }
         var functionText = "var results = null;"+
-                           "results = (function(msg){ "+
+                           "results = (function(msg,__send__,__done__){ "+
                               "var __msgid__ = msg._msgid;"+
                               "var node = {"+
+                                 "id:__node__.id,"+
+                                 "name:__node__.name,"+
                                  "log:__node__.log,"+
                                  "error:__node__.error,"+
                                  "warn:__node__.warn,"+
+                                 "debug:__node__.debug,"+
+                                 "trace:__node__.trace,"+
                                  "on:__node__.on,"+
                                  "status:__node__.status,"+
-                                 "send:function(msgs){ __node__.send(__msgid__,msgs);}"+
+                                 "send:function(msgs,cloneMsg){ __node__.send(__send__,__msgid__,msgs,cloneMsg);},"+
+                                 "done:__done__"+
                               "};\n"+
-                              this.func+"\n"+
-                           "})(msg);";
-        this.topic = n.topic;
-        this.outstandingTimers = [];
-        this.outstandingIntervals = [];
+                              node.func+"\n"+
+                           "})(msg,send,done);";
+        node.topic = n.topic;
+        node.outstandingTimers = [];
+        node.outstandingIntervals = [];
         var sandbox = {
             console:console,
             util:util,
             Buffer:Buffer,
+            Date: Date,
             RED: {
                 util: RED.util
             },
             __node__: {
+                id: node.id,
+                name: node.name,
                 log: function() {
                     node.log.apply(node, arguments);
                 },
@@ -83,8 +232,14 @@ module.exports = function(RED) {
                 warn: function() {
                     node.warn.apply(node, arguments);
                 },
-                send: function(id, msgs) {
-                    sendResults(node, id, msgs);
+                debug: function() {
+                    node.debug.apply(node, arguments);
+                },
+                trace: function() {
+                    node.trace.apply(node, arguments);
+                },
+                send: function(send, id, msgs, cloneMsg) {
+                    sendResults(node, send, id, msgs, cloneMsg);
                 },
                 on: function() {
                     if (arguments[0] === "input") {
@@ -135,6 +290,12 @@ module.exports = function(RED) {
                     return node.context().global.keys.apply(node,arguments);
                 }
             },
+            env: {
+                get: function(envVar) {
+                    var flow = node._flow;
+                    return flow.getSetting(envVar);
+                }
+            },
             setTimeout: function () {
                 var func = arguments[0];
                 var timerId;
@@ -182,163 +343,128 @@ module.exports = function(RED) {
         if (util.hasOwnProperty('promisify')) {
             sandbox.setTimeout[util.promisify.custom] = function(after, value) {
                 return new Promise(function(resolve, reject) {
-                    sandbox.setTimeout(function(){ resolve(value) }, after);
+                    sandbox.setTimeout(function(){ resolve(value); }, after);
                 });
-            }
+            };
         }
-        
-        var requiredModules = [];
-        var installedModules = {};
-        var npmModules = [];
-        const RE_SCOPED = /^(@[^/]+\/[^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
-        const RE_NORMAL = /^([^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
 
-        /*
-        Get the required modules by parsing code
+        /*start function-npm specific code*/    
+        /**********************************/
+        let downloadComplete = false;
+        let downloadError = false;
+        let instanceRequiredModules;
         
-        require\( : match require followed by opening parentheses
-        ( : begin capturing group
-        [^)]+: match one or more non ) characters
-        ) : end capturing group
-        \) : match closing parentheses            
-        */
-        var pattern = /require\(([^)]+)\)/g
-        var functionTextwoComments = strip(functionText);
-        var result = pattern.exec(functionTextwoComments);
-        
-        while(result != null){
-            var module_name = result[1];
-            //replace quotes if any
-            module_name = module_name.replace(/'/g,"");
-            module_name = module_name.replace(/"/g,"");
+        try{
+            //get the required modules by parsing the function text
+            instanceRequiredModules = getRequiredModules(functionText);
+            
+            //set the node status to installing
+            node.status({fill:"blue",shape:"dot",text:"installing"});                
+            
+            instanceRequiredModules.forEach(function(module){
+                registerAndLoadModule(module, allInstancesRequiredModules);                
+            });
 
-            var matched = module_name.charAt(0) === "@" ? module_name.match(RE_SCOPED) : module_name.match(RE_NORMAL);
-            var moduleNameOnly = matched[1];
-            var modulePath = matched[2] || '';
-            var moduleVersion = matched[3] || '';
-            requiredModules.push({name: moduleNameOnly, path: modulePath, version: moduleVersion, fullName: module_name});
-            result = pattern.exec(functionTextwoComments);
-        }
-        
-        var setStatus = function(errors, itemsProcessed){
-            if(itemsProcessed === requiredModules.length){
-                if(errors.length === 0){
-                    node.status({fill:"green",shape:"dot",text:"ready"});
-                    setTimeout(node.status.bind(node, {}), 5000);
-                }
-                else{
-                    var msg = errors.length.toString() + " package(s) failed.";
-                    errors.forEach(function(e){
-                        msg = msg + "\r\n" + e.moduleName;
-                    });
-                    node.status({fill:"red",shape:"dot",text: msg});
+            //function to check install status and update node status
+            const checkInstallStatusAndUpdateStatusMessage = function(){                
+                let result = checkInstallStatus(instanceRequiredModules, allInstancesRequiredModules);
+                if(result.attemptComplete){
+                    if(result.installSuccessful){
+                        node.status({fill:"green",shape:"dot",text:"ready"});
+                        downloadComplete = true;
+                    }else{
+                        node.error(result.errorMessage);
+                        node.status({fill:"red",shape:"dot",text: result.errorMessage});
+                        downloadError = true;
+                    }
+                }else{
+                    //node.status({fill:"blue",shape:"dot",text:result.statusMessage});
+                    setTimeout(checkInstallStatusAndUpdateStatusMessage, 1000);
                 }
             }
-        };
 
-        var errors = [];
-        var itemsProcessed = 0;
-        requiredModules.forEach(function(npmModule) {
-            var moduleFullPath = npmModule.path === '' ? tempNodeModulesPath + npmModule.name : tempNodeModulesPath + npmModule.path;
-            if (installedModules[npmModule.fullName]) {                
-                npmModules[npmModule.fullName] = require(moduleFullPath);
-                itemsProcessed++;
-              } 
-            else {
-                node.status({fill:"blue",shape:"dot",text:"installing"});
-                npm.load({prefix: tempDir, progress: false, loglevel: 'silent'}, function (er) {
-                    if (er){
-                        errors.push({moduleName: npmModule.fullName, error: er});
-                        itemsProcessed++;
-                        setStatus(errors,itemsProcessed);
-                        return node.error(er);
-                    } 
+            checkInstallStatusAndUpdateStatusMessage();
             
-                    npm.commands.install([npmModule.fullName], function (er, data) {                        
-                        itemsProcessed++;
-                        if (er) {
-                            installedModules[npmModule.fullName] = false;
-                            errors.push({moduleName: npmModule.fullName, error: er});
-                            setStatus(errors,itemsProcessed);
-                            return node.error(er);
-                        }
+            sandbox.require = function(moduleFullName){
+                return requireOverload(moduleFullName, allInstancesRequiredModules);
+            }
+        }catch(err){
+            //set error bit and send error to the log and set status            
+            downloadError = true;
+            node.error(err);            
+            node.status({fill:"red",shape:"dot",text: err.message});            
+        }
+        /*end function-npm specific code*/    
+        /********************************/
             
-                        try {                                                    
-                            npmModules[npmModule.fullName] = require(moduleFullPath);                            
-                            node.log('Downloaded and installed NPM module: ' + npmModule.fullName);
-                            installedModules[npmModule.fullName] = true;
-                        } catch (err) {                            
-                            installedModules[npmModule.fullName] = false;
-                            errors.push({moduleName: npmModule.fullName, error: err});
-                            node.error(err);
-                        }
-                        setStatus(errors,itemsProcessed);                            
-                  })
-                })
-              }
-        }, this);
-
-        var checkPackageLoad = function(){
-            var downloadProgressResult = null;
-            //check that the required modules are processed
-            if(requiredModules.length != 0){
-                requiredModules.forEach(function(npmModule) {
-                    if (!(installedModules.hasOwnProperty(npmModule.fullName))){                        
-                        downloadProgressResult = false;
-                    }
-                    else{
-                        downloadProgressResult = (downloadProgressResult !== null) ? (downloadProgressResult && true) : true
-                    }
-                }, this);
-            }
-            else{
-                downloadProgressResult = true;
-            }
-            return downloadProgressResult;
-        };
-
-        var requireOverload = function(moduleName){
-            try {                
-                return npmModules[moduleName]; 
-            } catch(err){
-                node.error("Cannot find module : " + moduleName);
-            }            
-        };
-
-        //Add modules to the context
-        sandbox.__npmModules__ = npmModules;
-        sandbox.require = requireOverload;
-
+        
         var context = vm.createContext(sandbox);
         try {
-            node.script = vm.createScript(functionText);
+            node.script = vm.createScript(functionText, {
+                filename: 'Function node:'+node.id+(node.name?' ['+node.name+']':''), // filename for stack traces
+                displayErrors: true
+                // Using the following options causes node 4/6 to not include the line number
+                // in the stack output. So don't use them.
+                // lineOffset: -11, // line number offset to be used for stack traces
+                // columnOffset: 0, // column number offset to be used for stack traces
+            });
             
-            node.on("input", function(msg) {
-                
-                //configure the event first
-                eventEmitter.on('load-complete',function(){                    
-                    try {
-                        var start = process.hrtime();
-                        context.msg = msg;
-                        node.script.runInContext(context);
-                        sendResults(node,msg._msgid,context.results);
-    
-                        var duration = process.hrtime(start);
-                        var converted = Math.floor((duration[0] * 1e9 + duration[1])/10000)/100;
-                        node.metric("duration", msg, converted);
-                        if (process.env.NODE_RED_FUNCTION_TIME) {
-                            node.status({fill:"yellow",shape:"dot",text:""+converted});
-                        }
-                    } catch(err) {
-    
+            
+            /*start function-npm specific code*/    
+            /**********************************/        
+            node.on("input", function(msg, send, done){         
+                const checkStatusAndInvokeEventHandler = function(){
+                    if(downloadComplete){
+                        inputEventHandler(msg,send,done);                        
+                    }else if(downloadError){
+                        node.error("Error downloading module, not executing function");
+                    }else{
+                        setTimeout(checkStatusAndInvokeEventHandler, 1000);
+                    }
+                }
+
+                checkStatusAndInvokeEventHandler();
+            });
+            
+            /*end function-npm specific code*/    
+            /********************************/
+            
+            //function-npm edit to line below added a name for the function
+            var inputEventHandler = function(msg,send,done) {                
+                try {
+                    var start = process.hrtime();
+                    context.msg = msg;
+                    context.send = send;
+                    context.done = done;
+
+                    node.script.runInContext(context);
+                    sendResults(this,send,msg._msgid,context.results,false);
+                    if (handleNodeDoneCall) {
+                        done();
+                    }
+
+                    var duration = process.hrtime(start);
+                    var converted = Math.floor((duration[0] * 1e9 + duration[1])/10000)/100;
+                    node.metric("duration", msg, converted);
+                    if (process.env.NODE_RED_FUNCTION_TIME) {
+                        node.status({fill:"yellow",shape:"dot",text:""+converted});
+                    }
+                } catch(err) {
+                    if ((typeof err === "object") && err.hasOwnProperty("stack")) {
+                        //remove unwanted part
+                        var index = err.stack.search(/\n\s*at ContextifyScript.Script.runInContext/);
+                        err.stack = err.stack.slice(0, index).split('\n').slice(0,-1).join('\n');
+                        var stack = err.stack.split(/\r?\n/);
+
+                        //store the error in msg to be used in flows
+                        msg.error = err;
+
                         var line = 0;
                         var errorMessage;
-                        var stack = err.stack.split(/\r?\n/);
                         if (stack.length > 0) {
                             while (line < stack.length && stack[line].indexOf("ReferenceError") !== 0) {
                                 line++;
                             }
-    
                             if (line < stack.length) {
                                 errorMessage = stack[line];
                                 var m = /:(\d+):(\d+)$/.exec(stack[line+1]);
@@ -352,43 +478,31 @@ module.exports = function(RED) {
                         if (!errorMessage) {
                             errorMessage = err.toString();
                         }
-                        node.error(errorMessage, msg);
+                        done(errorMessage);
                     }
-                    eventEmitter.removeAllListeners('load-complete');
-                });
-
-                //Check is the npm packages are loaded, if not wait for 1 sec and check again                
-                if(!checkPackageLoad()){
-                    var intervalId = setInterval(function() {
-                        if(!checkPackageLoad()){
-                            node.status("Waiting for package download");                            
-                        }
-                        else {
-                            eventEmitter.emit('load-complete');
-                            clearInterval(intervalId);
-                        }
-                    }, 1000);
+                    else if (typeof err === "string") {
+                        done(err);
+                    }
+                    else {
+                        done(JSON.stringify(err));
+                    }
                 }
-                else{                    
-                    eventEmitter.emit('load-complete');
-                }
-            });
-            
+            };
             node.on("close", function() {
                 while (node.outstandingTimers.length > 0) {
-                    clearTimeout(node.outstandingTimers.pop())
+                    clearTimeout(node.outstandingTimers.pop());
                 }
                 while (node.outstandingIntervals.length > 0) {
-                    clearInterval(node.outstandingIntervals.pop())
+                    clearInterval(node.outstandingIntervals.pop());
                 }
                 node.status({});
-            })
+            });
         } catch(err) {
             // eg SyntaxError - which v8 doesn't include line number information
             // so we can't do better than this
             node.error(err);
         }
     }
-    RED.nodes.registerType("function-npm",FunctionNPMNode);
+    RED.nodes.registerType("function-npm",FunctionNpmNode);
     RED.library.register("functions");
-}
+};
