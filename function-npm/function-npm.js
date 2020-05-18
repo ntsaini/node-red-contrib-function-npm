@@ -13,7 +13,6 @@ module.exports = function(RED) {
     
     //one common temp dir for all instances
     var tempDirAllInstances = temp.mkdirSync();
-  
     //this variable will store reference for modules for all instances
     const allInstancesRequiredModules = {};
     
@@ -47,7 +46,6 @@ module.exports = function(RED) {
         Installed: 2,
         Error: 3,
     }
-  
     const getRequiredModules = function(functionText){        
         const RE_SCOPED = /^(@[^/]+\/[^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
         const RE_NORMAL = /^([^/@]+)(?:\/([^@]+))?(?:@([\s\S]+))?/;
@@ -84,7 +82,6 @@ module.exports = function(RED) {
         }
         return requiredModules;
     }
-  
     const loadModule = function(moduleFullName, dir){
         let promise = new Promise(function(resolve,reject){
             try{
@@ -101,7 +98,6 @@ module.exports = function(RED) {
         });
         return promise;
     }
-  
     const checkInstallStatus = function(instanceRequiredModules, allModulesList){
         let result = {
             attemptComplete: true,
@@ -132,7 +128,6 @@ module.exports = function(RED) {
         });
         return result;
     }
-  
     const requireOverload = function(moduleFullName, allModulesList){                  
         if(allModulesList[moduleFullName] && 
                 allModulesList[moduleFullName].requireReference &&
@@ -184,13 +179,11 @@ module.exports = function(RED) {
             send(msgs);
         }
     }
-  
     function FunctionNpmNode(n) {  //Name Change
         RED.nodes.createNode(this,n);
         var node = this;
         node.name = n.name;
         node.func = n.func;
-  
         var handleNodeDoneCall = true;
         // Check to see if the Function appears to call `node.done()`. If so,
         // we will assume it is well written and does actually call node.done().
@@ -198,7 +191,6 @@ module.exports = function(RED) {
         if (/node\.done\s*\(\s*\)/.test(node.func)) {
             handleNodeDoneCall = false;
         }
-  
         var functionText = "var results = null;"+
                            "results = (function(msg,__send__,__done__){ "+
                               "var __msgid__ = msg._msgid;"+
@@ -355,7 +347,7 @@ module.exports = function(RED) {
                 });
             };
         }
-  
+
         /*start function-npm specific code*/    
         /**********************************/
         let downloadComplete = false;
@@ -372,7 +364,7 @@ module.exports = function(RED) {
             instanceRequiredModules.forEach(function(module){
                 registerAndLoadModule(module, allInstancesRequiredModules);                
             });
-  
+
             //function to check install status and update node status
             const checkInstallStatusAndUpdateStatusMessage = function(){                
                 let result = checkInstallStatus(instanceRequiredModules, allInstancesRequiredModules);
@@ -390,7 +382,7 @@ module.exports = function(RED) {
                     setTimeout(checkInstallStatusAndUpdateStatusMessage, 1000);
                 }
             }
-  
+
             checkInstallStatusAndUpdateStatusMessage();
             
             sandbox.require = function(moduleFullName){
@@ -430,7 +422,7 @@ module.exports = function(RED) {
                         setTimeout(checkStatusAndInvokeEventHandler, 1000);
                     }
                 }
-  
+
                 checkStatusAndInvokeEventHandler();
             });
             
@@ -444,13 +436,13 @@ module.exports = function(RED) {
                     context.msg = msg;
                     context.send = send;
                     context.done = done;
-  
+
                     node.script.runInContext(context);
                     sendResults(this,send,msg._msgid,context.results,false);
                     if (handleNodeDoneCall) {
                         done();
                     }
-  
+
                     var duration = process.hrtime(start);
                     var converted = Math.floor((duration[0] * 1e9 + duration[1])/10000)/100;
                     node.metric("duration", msg, converted);
@@ -463,17 +455,16 @@ module.exports = function(RED) {
                         var index = err.stack.search(/\n\s*at ContextifyScript.Script.runInContext/);
                         err.stack = err.stack.slice(0, index).split('\n').slice(0,-1).join('\n');
                         var stack = err.stack.split(/\r?\n/);
-  
+
                         //store the error in msg to be used in flows
                         msg.error = err;
-  
+
                         var line = 0;
                         var errorMessage;
                         if (stack.length > 0) {
                             while (line < stack.length && stack[line].indexOf("ReferenceError") !== 0) {
                                 line++;
                             }
-  
                             if (line < stack.length) {
                                 errorMessage = stack[line];
                                 var m = /:(\d+):(\d+)$/.exec(stack[line+1]);
@@ -497,7 +488,6 @@ module.exports = function(RED) {
                     }
                 }
             };
-  
             node.on("close", function() {
                 while (node.outstandingTimers.length > 0) {
                     clearTimeout(node.outstandingTimers.pop());
@@ -515,4 +505,4 @@ module.exports = function(RED) {
     }
     RED.nodes.registerType("function-npm",FunctionNpmNode);
     RED.library.register("functions");
-  };
+};
