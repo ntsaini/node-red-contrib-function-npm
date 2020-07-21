@@ -120,19 +120,30 @@ project:
    [interactive rebase](https://help.github.com/articles/interactive-rebase)
    feature to tidy up your commits before making them public.
 
-5. Locally merge (or rebase) the upstream development branch into your topic branch:
+5. Run the tests locally and verify that all tests pass
+
+   ```bash
+   npm test
+   ```
+6. Update package version manually and update the change log with auto-changelog
+
+   ```bash
+   npx auto-changelog -p
+   ```
+
+7. Locally merge (or rebase) the upstream development branch into your topic branch:
 
    ```bash
    git pull [--rebase] upstream <dev-branch>
    ```
 
-6. Push your topic branch up to your fork:
+8. Push your topic branch up to your fork:
 
    ```bash
    git push origin <topic-branch-name>
    ```
 
-7. [Open a Pull Request](https://help.github.com/articles/using-pull-requests/)
+9. [Open a Pull Request](https://help.github.com/articles/using-pull-requests/)
     with a clear title and description.
 
 **IMPORTANT**: By submitting a patch, you agree to allow the project owner to

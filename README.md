@@ -61,12 +61,3 @@ Author  : Node-RED team
 For the base function node code.
 
 </pre>
-<pre>
-Project : parse-package-name <a href="https://github.com/egoist/parse-package-name">(https://github.com/egoist/parse-package-name)</a>
-License : <a href="https://github.com/egoist/parse-package-name/blob/master/LICENSE">MIT License</a>
-Author  : Egoist
-
-For package name parsing regex
-
-</pre>
-
