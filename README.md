@@ -1,6 +1,9 @@
 # node-red-contrib-function-npm
 Node red function node with capability to install and use packages from npm
 
+## Compatability
+node-red version > 1.0
+
 ## Install
 
 From your node-red directory
