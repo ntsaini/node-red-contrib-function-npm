@@ -18,10 +18,10 @@ The module is automatically cleaned from the disk when the node-red process clos
 var lowerCase = require('lower-case@1.1.3')
 
 //if no version specified the latest version is installed
-var upperCase = require('upper-case');
+var uc = require('upper-case');
 
 msg.payload = {             
-    upper: upperCase('Hello World'),
+    upper: uc.upperCase('Hello World'),
     lower: lowerCase('Hello World')
 } ;
 return msg;
