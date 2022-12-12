@@ -31,7 +31,7 @@
   "devDependencies": {
     "auto-changelog": "^2.2.1",
     "mocha": "^8.2.1",
-    "node-red": "^1.2.7",
-    "node-red-node-test-helper": "^0.2.5"
+    "node-red": "^3.0.2",
+    "node-red-node-test-helper": "^0.3.0"
   }
 }
